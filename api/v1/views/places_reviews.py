@@ -1,89 +1,87 @@
 #!/usr/bin/python3
-'''places_reviews API'''
-from flask import jsonify, request
-from werkzeug.exceptions import NotFound, MethodNotAllowed, BadRequest
+"""the places reviews"""
 from api.v1.views import app_views
+from flask import jsonify, abort, request, make_response
 from models import storage
 from models.place import Place
 from models.review import Review
 from models.user import User
+from flasgger.utils import swag_from
 
 
-@app_views.route('/places/<place_id>/reviews', methods=['GET', 'POST'])
-@app_views.route('/reviews/<review_id>', methods=['GET', 'DELETE', 'PUT'])
-def handle_reviews(place_id=None, review_id=None):
-    '''reviews endpoint'''
-    handlers = {
-        'GET': get_reviews,
-        'DELETE': remove_review,
-        'POST': add_review,
-        'PUT': update_review
-    }
-    if request.method in handlers:
-        return handlers[request.method](place_id, review_id)
-    else:
-        raise MethodNotAllowed(list(handlers.keys()))
-
-
-def get_reviews(place_id=None, review_id=None):
-    '''finds the review with id'''
-    if place_id:
-        place = storage.get(Place, place_id)
-        if place:
-            reviews = []
-            for review in place.reviews:
-                reviews.append(review.to_dict())
-            return jsonify(reviews)
-    elif review_id:
-        review = storage.get(Review, review_id)
-        if review:
-            return jsonify(review.to_dict())
-    raise NotFound()
-
-
-def remove_review(place_id=None, review_id=None):
-    '''deletes review with id'''
-    review = storage.get(Review, review_id)
-    if review:
-        storage.delete(review)
-        storage.save()
-        return jsonify({}), 200
-    raise NotFound()
-
-
-def add_review(place_id=None, review_id=None):
-    '''Add new review'''
+@app_views.route('/places/<string:place_id>/reviews',
+                 methods=['GET'], strict_slashes=False)
+@swag_from('documentation/reviews/get.yml', methods=['GET'])
+def get_all_reviews(place_id):
+    """ get reviews by id"""
     place = storage.get(Place, place_id)
-    if not place:
-        raise NotFound()
-    data = request.get_json()
-    if type(data) is not dict:
-        raise BadRequest(description='Not a JSON')
-    if 'user_id' not in data:
-        raise BadRequest(description='Missing user_id')
-    user = storage.get(User, data['user_id'])
-    if not user:
-        raise NotFound()
-    if 'text' not in data:
-        raise BadRequest(description='Missing text')
-    data['place_id'] = place_id
-    new_review = Review(**data)
-    new_review.save()
-    return jsonify(new_review.to_dict()), 201
+    if place is None:
+        abort(404)
+    reviews = [obj.to_dict() for obj in place.reviews]
+    return jsonify(reviews)
 
 
-def update_review(place_id=None, review_id=None):
-    '''Up to date review with id'''
-    xkeys = ('id', 'user_id', 'place_id', 'created_at', 'updated_at')
-    if review_id:
-        review = storage.get(Review, review_id)
-        if review:
-            data = request.get_json()
-            if type(data) is not dict:
-                raise BadRequest(description='Not a JSON')
-            for key, value in data.items():
-                if key not in xkeys:
-                    setattr(review, key, value)
-            review.save()
-            return jsonify(review.to_dict()), 200
-    raise NotFound()
+@app_views.route('/reviews/<string:review_id>', methods=['GET'],
+                 strict_slashes=False)
+@swag_from('documentation/reviews/get_id.yml', methods=['GET'])
+def get_review(review_id):
+    """find review by id"""
+    review = storage.get(Review, review_id)
+    if review is None:
+        abort(404)
+    return jsonify(review.to_dict())
+
+
+@app_views.route('/reviews/<string:review_id>', methods=['DELETE'],
+                 strict_slashes=False)
+@swag_from('documentation/reviews/delete.yml', methods=['DELETE'])
+def del_review(review_id):
+    """remove review by id
+    """
+    review = storage.get(Review, review_id)
+    if review is None:
+        abort(404)
+    review.delete()
+    storage.save()
+    return jsonify({})
+
+
+@app_views.route('/places/<string:place_id>/reviews', methods=['POST'],
+                 strict_slashes=False)
+@swag_from('documentation/reviews/post.yml', methods=['POST'])
+def create_obj_review(place_id):
+    """add new reviews"""
+    place = storage.get(Place, place_id)
+    if place is None:
+        abort(404)
+    if not request.get_json():
+        return make_response(jsonify({"error": "Not a JSON"}), 400)
+    if 'user_id' not in request.get_json():
+        return make_response(jsonify({"error": "Missing user_id"}), 400)
+    if 'text' not in request.get_json():
+        return make_response(jsonify({"error": "Missing text"}), 400)
+    kwargs = request.get_json()
+    kwargs['place_id'] = place_id
+    user = storage.get(User, kwargs['user_id'])
+    if user is None:
+        abort(404)
+    obj = Review(**kwargs)
+    obj.save()
+    return (jsonify(obj.to_dict()), 201)
+
+
+@app_views.route('/reviews/<string:review_id>', methods=['PUT'],
+                 strict_slashes=False)
+@swag_from('documentation/reviews/put.yml', methods=['PUT'])
+def post_review(review_id):
+    """ update rview by id """
+    if not request.get_json():
+        return make_response(jsonify({"error": "Not a JSON"}), 400)
+    obj = storage.get(Review, review_id)
+    if obj is None:
+        abort(404)
+    for key, value in request.get_json().items():
+        if key not in ['id', 'user_id', 'place_id', 'created_at', 'updated']:
+            setattr(obj, key, value)
+    storage.save()
+    return jsonify(obj.to_dict())
